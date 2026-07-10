@@ -1,5 +1,0 @@
-1. i need to create a report which analyzes discrepancies in a set of columns. 
-2. the summary is in dev/comparison/summary.csv 
-3. i needd to go into the reason of discrepancies that are not due to formatting issues but a data processing iussue (so ignor discrepancies such as locations having different format but meaning the same e.g. MADRID vs SPAIN, MADRID. 
-
-Can you write this report for me? the discrepancies are stored in dev/comparison/discrepancies
