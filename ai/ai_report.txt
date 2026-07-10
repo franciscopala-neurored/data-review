@@ -1,0 +1,430 @@
+FIS vs TMS DATA DISCREPANCY REPORT
+Work Order Checklist — Data Processing Issues
+Dataset: 7,915 container shipping work orders
+Report date: 2026-07-01
+================================================================================
+
+This report covers only genuine data processing discrepancies. Differences that
+are purely formatting in nature (e.g. "SAN PEDRO SULA" vs "SAN PEDRO SULA, HN",
+or "18:30" vs "18:30:00.000Z") are excluded from the findings below.
+
+================================================================================
+PART 1 — CRITICAL: SYSTEMATIC FIELD-MAPPING FAILURES (0% MATCH)
+================================================================================
+
+The following 16 columns show 0% match across all 7,915 rows. This is not a
+per-record data quality issue but a structural integration failure: either these
+fields are entirely absent in TMS, the field mapping was never implemented, or
+the data was not migrated.
+
+  Auth                 7,915 discrepancies
+  Auto Cr.             7,915 discrepancies
+  Dispatcher           7,915 discrepancies
+  GrW KGM              7,915 discrepancies
+  Fuel Surcharge       7,915 discrepancies
+  Overweight Surcharge 7,915 discrepancies
+  Multistop Locode     7,915 discrepancies
+  Multistop Location   7,915 discrepancies
+  Maut/Toll Surcharge  7,915 discrepancies
+  I/E                  7,915 discrepancies
+  Other Activities     7,915 discrepancies
+  Total                7,915 discrepancies
+  Transport            7,915 discrepancies
+  Tran. Ex.            7,915 discrepancies
+  Subcontr             7,915 discrepancies
+  Shipment             7,915 discrepancies
+
+These columns require separate investigation to determine whether data exists in
+one system but not the other, or whether the values are stored under different
+field names in TMS. Until resolved, any reporting that relies on these fields
+from TMS will be unreliable.
+
+NOTE — Seq column (0% match, formatting only):
+The Seq column also shows 0% match across 7,915 rows. However, inspection of
+the raw discrepancy file confirms this is a type-formatting difference: FIS
+stores sequence numbers as integers (1, 2, 3 ...) while TMS stores them as
+decimals (1.0, 2.0, 3.0 ...). The underlying values are identical and no data
+is lost.
+
+================================================================================
+PART 2 — CRITICAL: CONTAINER STATUS FLAGS
+================================================================================
+
+2.1  E/F — Empty/Full container status
+     Match rate: 26.63%  |  Discrepancies: 5,807 of 7,915 rows
+
+This is the most impactful single data processing error in the dataset. Entire
+batches of containers have their Empty/Full status inverted between the two
+systems: FIS records the container as Empty (E) while TMS records it as Full (F).
+
+Pattern: Almost the entire 5,807-row discrepancy set is E (FIS) vs F (TMS). The
+affected batches involve many containers per work order and include large work
+orders (WOs 150026131, 150026132, 150026133, 150026145, 150026148, 150026155,
+150026247, 150026328, 150025747, 150025750, 150025938, 150026573, 150026574,
+150026726, 150026727, and many others).
+
+The systematic, batch-level nature of this error indicates a mapping or default
+value error in the TMS integration, not individual data entry mistakes. Every
+container in these work orders is affected uniformly.
+
+Impact: E/F status directly drives operational decisions such as depot
+positioning, weight calculations, and cost allocations. A blanket inversion
+renders all downstream calculations for these work orders incorrect.
+
+2.2  VGM — Verified Gross Mass flag
+     Match rate: 87.67%  |  Discrepancies: 976 of 7,915 rows
+
+The dominant pattern is N (FIS) vs Y (TMS): approximately 968 of the 976
+discrepant rows show FIS recording no VGM while TMS records VGM confirmed.
+A small number (~8 rows, e.g. WOs 150026136, 150026342 series, 150026402) show
+the reverse: Y in FIS, N in TMS.
+
+The near-complete directional consistency (968 in one direction) suggests either
+a systematic default being applied in TMS during import (blanket Y), or a
+business rule difference in how the two systems define VGM applicability. This
+is not scattered individual entry errors.
+
+Impact: VGM is a regulatory compliance field. Incorrect values may affect
+customs documentation and statutory reporting.
+
+================================================================================
+PART 3 — LOCATION DATA QUALITY
+================================================================================
+
+All three location columns share a set of underlying error types. They are
+documented by column below, with cross-column patterns noted.
+
+3.1  Start Location
+     Match rate: 69.65%  |  Discrepancies: 2,402 of 7,915 rows
+
+After removing formatting-only differences, the following data processing errors
+remain:
+
+a) Country name used instead of city name:
+   FIS stores "EL SALVADOR" (the country) where TMS stores "SAN SALVADOR"
+   (the capital city). These are not the same level of geographic specificity
+   and affect locode matching and routing logic. Multiple work orders affected.
+
+b) Wrong city at same country level:
+   FIS: VILLA NUEVA  vs  TMS: GUATEMALA CITY
+   These are distinct municipalities in Guatemala. Villa Nueva is a separate
+   city south of Guatemala City. Work orders for these locations will be
+   misrouted.
+
+c) Completely different ports assigned:
+   FIS: PIEDRAS NEGRAS  vs  TMS: SANTO TOMAS DE CASTILLA
+   These are different Guatemalan ports. The assignment appears to be inverted
+   or arbitrarily remapped in one system.
+
+   FIS: PUERTO BARRIOS  vs  TMS: SANTO TOMAS DE CASTILLA
+   Puerto Barrios and Santo Tomás de Castilla are distinct ports on Guatemala's
+   Atlantic coast. They are not interchangeable.
+
+   FIS: PUERTO CORTES  vs  TMS: blank, or CORINTO
+   Puerto Cortés (Honduras) and Corinto (Nicaragua) are different ports in
+   different countries. Some work orders show TMS with no value at all.
+
+   FIS: SANTO DOMINGO  vs  TMS: CAUCEDO
+   Santo Domingo and Caucedo are different locations in the Dominican Republic.
+
+d) Administrative district vs city name (Buenos Aires area):
+   FIS uses district-level names: DOCK SUD, CABA (Ciudad Autónoma de Buenos
+   Aires), AVELLANEDA — all real Buenos Aires metropolitan districts.
+   TMS uses: BUENOS AIRES — the city aggregate.
+   This is a granularity inconsistency that prevents locode matching.
+
+e) Completely wrong location (Paraguay):
+   FIS: MUNICIPIO DE VILLETA  vs  TMS: ASUNCION
+   FIS: ALBERDI               vs  TMS: ASUNCION
+   Both Villeta and Alberdi are distinct municipalities in Paraguay, not
+   suburbs or neighborhoods of Asunción. TMS appears to be defaulting all
+   Paraguayan locations to the capital.
+
+f) Locode stored as location name:
+   FIS: 130001  vs  TMS: CARTAGENA (COLOMBIA)
+   FIS is storing an internal or UN/LOCODE code string ("130001") in the
+   location name field instead of a human-readable city name. TMS has the
+   correct text. This affects display, search, and downstream integration.
+
+g) Missing data in TMS:
+   FIS: KRALENDIJK  vs  TMS: blank
+   Kralendijk is the capital of Bonaire. TMS has no value. Data was not
+   migrated for these records.
+
+3.2  End Location
+     Match rate: 79.72%  |  Discrepancies: 1,605 of 7,915 rows
+
+The same systematic error types appear in End Location. Additional cases:
+
+a) Wrong city within country (Costa Rica):
+   FIS: PUERTO LIMON  vs  TMS: HEREDIA
+   Puerto Limón is a Caribbean port city; Heredia is an inland city near San
+   José. These are entirely different locations.
+
+b) Wrong port (Panama):
+   FIS: MANZANILLO  vs  TMS: BALBOA
+   Manzanillo International Terminal and Balboa are two distinct ports on
+   opposite sides of the Panama Canal. Assigning the wrong port affects
+   vessel planning and demurrage calculations.
+
+c) Typo in FIS:
+   FIS: CUIDAD QUESADA  vs  TMS: CIUDAD QUESADA
+   FIS has a misspelling ("CUIDAD" instead of "CIUDAD"). This is a FIS data
+   entry error. TMS has the correct spelling.
+
+d) Country name vs city name (same as Start Location):
+   EL SALVADOR vs SAN SALVADOR — same issue as documented in 3.1a.
+   PIEDRAS NEGRAS vs PUERTO QUETZAL / SANTO TOMAS DE CASTILLA — same issue
+   as documented in 3.1c.
+
+e) Locode in location name field (same as Start Location):
+   FIS: 130001  vs  TMS: CARTAGENA (COLOMBIA) — same issue as 3.1f.
+
+f) Missing data in TMS:
+   FIS: KRALENDIJK  vs  TMS: blank — same issue as 3.1g.
+   FIS: PUERTO QUETZAL  vs  TMS: blank (some records)
+
+3.3  Pos/Del Location (Positioning/Delivery Location)
+     Match rate: 19.29%  |  Discrepancies: 6,388 of 7,915 rows
+
+Note: a large portion of the 6,388 discrepancies consist of FIS storing "--"
+(a null placeholder) while TMS stores blank — both systems have no data, only
+the null representation differs. This portion should be treated as a formatting
+issue once the null representation is standardised. The following are the genuine
+data processing issues:
+
+a) Inconsistent Spanish/English naming convention:
+   FIS uses "CIUDAD GUATEMALA", "CIUDAD DE GUATEMALA", or plain "GUATEMALA"
+   inconsistently, while TMS uses "GUATEMALA CITY" consistently. This is partly
+   a naming convention issue, but the inconsistency within FIS itself (three
+   different strings for the same city) indicates a lack of controlled vocabulary
+   in the FIS data entry process.
+
+b) Port assignment inverted relative to Start Location:
+   For the same work orders, Start Location records PIEDRAS NEGRAS (FIS) vs
+   SANTO TOMAS DE CASTILLA (TMS), but in Pos/Del Location the assignment is
+   reversed: FIS has SANTO TOMAS DE CASTILLA and TMS has PUERTO BARRIOS.
+   This suggests an inconsistent or incorrect port code lookup table being
+   applied differently across fields.
+
+c) Neighborhood absorbed into city:
+   FIS: SOYAPANGO, SAN SALVADOR  vs  TMS: SAN SALVADOR
+   Soyapango is a municipality adjacent to San Salvador. TMS drops the
+   neighbourhood-level detail.
+
+d) Completely different locations:
+   FIS: LAMANI  vs  TMS: LA PAZ — different municipalities in Honduras.
+   FIS: CANTARRANAS  vs  TMS: SAN JUAN DE FLORES — different Honduran towns.
+   FIS: GOICOECHEA  vs  TMS: SAN JOSE — Goicoechea is a district of San José,
+   but TMS is recording the wrong city (San José vs the actual district).
+
+e) Data entry error in FIS:
+   FIS: "SAN SALVADOR," (trailing comma)  vs  TMS: SAN SALVADOR
+   FIS has a trailing comma in the location name. This is a FIS-side data
+   entry error that will cause string matching to fail.
+
+================================================================================
+PART 4 — LOCODE DISCREPANCIES
+================================================================================
+
+4.1  Pos/Del Locode
+     Match rate: 25.32%  |  Discrepancies: 5,911 of 7,915 rows
+
+The majority of the 5,911 discrepancies are FIS "--" vs TMS blank — both null,
+different representations (same as Pos/Del Location above, formatting only).
+
+Genuine data processing issues:
+- Some work orders have a locode in TMS but "--" (null) in FIS, e.g.:
+  WO 150026212: FIS = "--",  TMS = HNHAE
+  WO 150027097: FIS = "--",  TMS = HNHAE
+  TMS has the correct locode while FIS has no value.
+
+4.2  Start Locode
+     Match rate: 99.77%  |  Discrepancies: 18 of 7,915 rows
+
+The 18 discrepancies mirror the wrong-port errors found in Start Location:
+
+- WO 150026112 (8 containers): FIS = GTPBR (Puerto Barrios), TMS = GTSTC
+  (Santo Tomás de Castilla) — reflects the same port assignment discrepancy
+  documented in Start Location.
+
+- WO 150025842, 150025855: FIS = HNPCR (Puerto Cortés), TMS = blank —
+  TMS is missing the locode.
+
+- WO 150026410: FIS = HNPCR, TMS = NICIO (Corinto, Nicaragua) —
+  wrong country assigned; Honduras port mapped to Nicaragua port.
+
+- WO 150026743: FIS = DOSDQ (Santo Domingo), TMS = DOCAU (Caucedo) —
+  consistent with the Start Location error (3.1c).
+
+- WO 150025675: FIS = GTPRQ (Puerto Quetzal), TMS = GTPBR (Puerto Barrios) —
+  two different Guatemalan ports, reversed assignment.
+
+- WO 150027094, 150026815, 150027137: FIS = "--", TMS has valid locode —
+  FIS missing locode where TMS has it.
+
+4.3  End Locode
+     Match rate: 99.71%  |  Discrepancies: 23 of 7,915 rows
+
+The 23 discrepancies again mirror End Location errors:
+
+- WOs 150026228–150026233, 150026690: FIS = BQKRA (Kralendijk, Bonaire),
+  TMS = blank — TMS is missing the locode (same as End Location missing value).
+
+- WO 150026605: FIS = CRCAL (Caldera, Costa Rica), TMS = CRAJU (Aguacaliente)
+  — different Costa Rican locodes.
+
+- WO 150025699, 150027038, 150027152: FIS = GTPRQ (Puerto Quetzal),
+  TMS = GTGUA (Guatemala City) — port vs inland city, consistent with location
+  errors in 3.2.
+
+- WO 150026930: FIS = GTSTC (Santo Tomás), TMS = GTPRQ (Puerto Quetzal).
+- WO 150026931: FIS = GTPBR (Puerto Barrios), TMS = GTPRQ (Puerto Quetzal).
+  Both are consistent with the Guatemalan port confusion seen across all fields.
+
+- WO 150026758: FIS = PAMIT (Manzanillo Int'l Terminal, Panama),
+  TMS = PABLB (Balboa) — consistent with End Location error in 3.2b.
+
+- WO 150026026, 150025994: FIS = CRLIO (Puerto Limón), TMS = CRHER (Heredia)
+  — consistent with End Location error in 3.2a.
+
+- WO 150025912: FIS = CRCAL (Caldera), TMS = CRHER (Heredia) — wrong Costa
+  Rican city. One container in the same WO has no value in FIS at all.
+
+================================================================================
+PART 5 — DATE AND TIME DISCREPANCIES
+================================================================================
+
+5.1  Pos/Del Date
+     Match rate: 20.51%  |  Discrepancies: 6,292 of 7,915 rows
+
+Two distinct types of discrepancy:
+
+a) Dates present in FIS, absent in TMS:
+   A large number of work orders have a Pos/Del Date recorded in FIS but no
+   corresponding value in TMS. Affected work orders include 150025747,
+   150025750, 150025935, 150025947, 150026131, and many others. TMS has not
+   captured the positioning/delivery date for these containers at all.
+
+b) Significant date differences:
+   Beyond the cases where TMS is blank, some records have both systems
+   populated but with substantially different dates:
+   - WO 150025771: FIS = 2026-01-06,  TMS = 2026-05-29  (nearly 5 months apart)
+   - WO 150026722: FIS = 2026-08-09,  TMS = 2026-06-21  (7+ weeks apart)
+   - WO 150027219: FIS = 2026-06-15,  TMS = 2026-05-25  (3 weeks apart)
+   Differences of this magnitude cannot be attributed to update timing; they
+   indicate different events being recorded or a date calculation error.
+
+5.2  Pos/Del Time
+     Match rate: 74.64%  |  Discrepancies: 2,007 of 7,915 rows
+
+The majority of discrepancies in this column are formatting only: FIS stores
+"18:30" while TMS stores "18:30:00.000Z". These represent the same time.
+
+However, a subset of discrepancies are genuine data loss: FIS has a meaningful
+time value while TMS stores "00:00:00.000Z", which appears to be TMS's default
+for null/missing times rather than midnight:
+   - WO 150026211: FIS = 07:00,  TMS = 00:00:00.000Z
+   - WO 150026376: FIS = 19:00,  TMS = 07:30  (completely different times)
+   - WO 150026925: FIS = 08:30,  TMS = 00:00:00.000Z
+   - WO 150025968: FIS = 18:30,  TMS = 00:00:00.000Z
+   - WO 150025866: FIS = 08:00,  TMS = 00:00:00.000Z
+   - WO 150026112: FIS = 09:00,  TMS = 00:00:00.000Z
+
+The "00:00:00.000Z" TMS default masks what is actually a missing or
+untransferred time value.
+
+================================================================================
+PART 6 — MINOR DISCREPANCIES
+================================================================================
+
+6.1  Currency
+     Match rate: 98.61%  |  Discrepancies: 110 of 7,915 rows
+
+All 110 discrepancies follow the same pattern: FIS stores "USD" while TMS has
+no value (blank). The affected work orders are concentrated in a small number
+of WO batches (prominently WO 150026820 with ~100 containers, plus a handful
+of other WOs). TMS is not capturing the currency for these records.
+
+6.2  Mode of Transport (MoT)
+     Match rate: 99.44%  |  Discrepancies: 44 of 7,915 rows
+
+All 44 discrepancies follow the same pattern: FIS stores "TR" (truck/road)
+while TMS has no value. The affected work orders are primarily WO 150025680
+(40+ containers) and a few others. TMS is not capturing the mode of transport
+for these records.
+
+6.3  DG — Dangerous Goods flag
+     Match rate: 99.57%  |  Discrepancies: 34 of 7,915 rows
+
+All 34 discrepancies are Y (FIS) vs N (TMS). FIS records the container as
+carrying dangerous goods while TMS records it as non-DG. Unlike VGM (which was
+predominantly one-directional at scale), DG discrepancies affect individual,
+scattered work orders rather than a single batch. The consistent direction
+(FIS=Y, TMS=N) suggests TMS may be defaulting DG to N rather than reading the
+FIS value.
+
+6.4  Size
+     Match rate: 99.95%  |  Discrepancies: 4 of 7,915 rows
+
+Four containers have different size codes between systems:
+   - WO 150026376 / XINU 8203849:  FIS = 45GP,  TMS = 22GP
+   - WO 150025660 / HLBU 1057514:  FIS = 42GP,  TMS = 45GP
+   - WO 150026795 / UACU 6053509:  FIS = 45GP,  TMS = 42GP
+   - WO 150027140 / HAMU 1447132:  FIS = 45GP,  TMS = 42GP
+These are likely individual data entry errors or a container size lookup
+mismatch for specific equipment types.
+
+================================================================================
+PART 7 — FIELDS NOT MAPPED IN FIS
+================================================================================
+
+7.1  Time (record timestamp)
+     Match rate: 3.63%  |  Discrepancies: 7,628 of 7,915 rows
+     Pattern: FIS = blank,  TMS = e.g. 10:28:01.528Z
+
+7.2  Transm. (transmission date)
+     Match rate: 3.63%  |  Discrepancies: 7,628 of 7,915 rows
+     Pattern: FIS = blank,  TMS = e.g. 2026-06-03
+
+Both Time and Transm. have the same 7,628 discrepant rows (3.63% of records),
+with FIS always blank and TMS always populated. These appear to be TMS-side
+system metadata fields (record creation timestamp and transmission date) that
+do not exist as data fields in FIS. This is expected behaviour, not a data
+processing error. The 287 matching rows likely correspond to records where
+TMS also has no value for these fields.
+
+================================================================================
+SUMMARY OF ACTION ITEMS
+================================================================================
+
+Priority 1 — Investigate immediately (data integrity at risk):
+  - 16 columns with 0% match: confirm whether TMS is missing these fields
+    entirely or whether field mapping was misconfigured.
+  - E/F inversion: identify the batch-level rule causing Empty/Full to be
+    flipped in TMS for the affected work orders.
+  - VGM systematic N→Y: determine whether TMS is applying a blanket default
+    or whether there is a business rule difference.
+
+Priority 2 — Fix location reference data:
+  - Correct the port lookup tables for Guatemala (GTPBR/GTSTC/GTPRQ confusion),
+    Costa Rica (CRLIO/CRHER), and Panama (PAMIT/PABLB).
+  - Align country-name vs city-name convention (EL SALVADOR → SAN SALVADOR).
+  - Remove locode codes from location name fields in FIS (field 130001).
+  - Populate missing TMS values for Kralendijk (BQKRA), Puerto Cortés (HNPCR),
+    and other locations shown as blank in TMS.
+
+Priority 3 — Date/time integrity:
+  - Investigate why Pos/Del Date is absent in TMS for a large number of
+    containers where FIS has a value.
+  - Clarify whether TMS "00:00:00.000Z" represents null or actual midnight,
+    and correct the ~dozens of records where FIS has a real time and TMS has
+    the default value.
+
+Priority 4 — Minor fixes:
+  - Currency, MoT, DG: investigate why TMS has no value where FIS has TR/USD/Y.
+  - Size: verify the 4 individual container size mismatches against physical
+    equipment records.
+  - Seq column: normalise integer vs decimal representation to restore match.
+
+================================================================================
