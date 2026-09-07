@@ -82,6 +82,11 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
         n_disc = len(discrepancies)
         n_match = len(matches)
         match_rate = round(n_match / total, 4) if total > 0 else None
+        disc_rate = round(n_disc / total, 4) if total > 0 else None
+
+        notna_match_mask = (~disc_mask) & norm1.notna() & norm2.notna()
+        n_notna_match = int(notna_match_mask.sum())
+        notna_match_rate = round(n_notna_match / total * 100, 2) if total > 0 else None
 
         summary_rows.append({
             'column': col,
@@ -89,6 +94,9 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
             'matching_rows': n_match,
             'discrepancies': n_disc,
             'match_rate_%': round(match_rate * 100, 2) if match_rate is not None else None,
+            'discrepancy_rate_%': round(disc_rate * 100, 2) if disc_rate is not None else None,
+            'notna_match_rows': n_notna_match,
+            'notna_match_rate_%': notna_match_rate,
         })
 
         safe_col = _safe_filename(col)
@@ -110,7 +118,7 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
             combinations_path = os.path.join(discrepancies_dir, f'{safe_col}_combinations.csv')
             combinations.to_csv(combinations_path, index=False)
 
-            print(f"[WARN] '{col}': {n_disc}/{total} mismatches → {disc_path}")
+            print(f"[WARN] '{col}': {n_disc}/{total} mismatches -> {disc_path}")
         else:
             print(f"[OK]   '{col}': no discrepancies")
 
@@ -118,12 +126,12 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
     merged = merged[ordered_cols]
     merged_path = os.path.join(output_dir, '_merged.csv')
     merged.to_csv(merged_path, index=False)
-    print(f"\n[INFO] Merged dataset saved → {merged_path}")
+    print(f"\n[INFO] Merged dataset saved -> {merged_path}")
 
     summary_df = pd.DataFrame(summary_rows).sort_values('discrepancies', ascending=False)
     summary_path = os.path.join(output_dir, '_summary.csv')
     summary_df.to_csv(summary_path, index=False)
-    print(f"[INFO] Summary saved → {summary_path}")
+    print(f"[INFO] Summary saved -> {summary_path}")
 
     return summary_df
 
