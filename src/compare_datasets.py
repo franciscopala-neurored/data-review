@@ -18,11 +18,24 @@ def _norm(series):
     return series
 
 
-def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='tms'):
+def _numeric_equal(series1, series2):
+    """True where both values parse as numbers and are numerically equal,
+    e.g. '25000' vs '25000.00' should match even though the strings differ."""
+    num1 = pd.to_numeric(series1, errors='coerce')
+    num2 = pd.to_numeric(series2, errors='coerce')
+    return num1.notna() & num2.notna() & (num1 == num2)
+
+
+def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='tms', column_order=None):
     """
     the function sequentially compares the columns of two datasets.
     the names must match.
     the merged dataset is saved in the output_dir, with a summary of the comparison.
+
+    column_order: optional list giving the desired order of the compared
+    (non-join) columns, e.g. the order columns appear in a FIS->TMS mapping
+    dict. Columns not listed are appended afterwards, sorted. If omitted,
+    columns are sorted alphabetically (previous behavior).
     """
     matches_dir = os.path.join(output_dir, 'matches')
     discrepancies_dir = os.path.join(output_dir, 'discrepancies')
@@ -42,9 +55,16 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
 
     all_cols_1 = set(df1.columns) - set(join_cols)
     all_cols_2 = set(df2.columns) - set(join_cols)
-    common_cols = sorted(all_cols_1 & all_cols_2)
+    common = all_cols_1 & all_cols_2
     only_in_1 = sorted(all_cols_1 - all_cols_2)
     only_in_2 = sorted(all_cols_2 - all_cols_1)
+
+    if column_order:
+        ordered = [c for c in column_order if c in common]
+        remaining = sorted(common - set(ordered))
+        common_cols = ordered + remaining
+    else:
+        common_cols = sorted(common)
 
     print(f"[INFO] Columns in both (will compare): {common_cols}")
     if only_in_1:
@@ -53,13 +73,25 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
         print(f"[SKIP] Only in {df2_name} (skipped): {only_in_2}")
     print()
 
+    # Left join: keep every df1 (e.g. FIS) row, even when it has no df2
+    # (e.g. TMS) counterpart, instead of silently dropping it like an inner
+    # join would.
     merged = pd.merge(
         df1,
         df2,
         on=join_cols,
-        how='inner',
-        suffixes=(f'_{df1_name}', f'_{df2_name}')
+        how='left',
+        suffixes=(f'_{df1_name}', f'_{df2_name}'),
+        indicator=True,
     )
+    match_flag_col = f'matched_in_{df2_name}'
+    merged[match_flag_col] = merged['_merge'].map({'both': 'Y', 'left_only': 'N'})
+    merged = merged.drop(columns='_merge')
+    matched_mask = merged[match_flag_col] == 'Y'
+
+    n_unmatched = int((~matched_mask).sum())
+    if n_unmatched:
+        print(f"[INFO] {n_unmatched}/{len(merged)} {df1_name} rows have no {df2_name} match (kept via left join)")
 
     summary_rows = []
 
@@ -69,22 +101,31 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
         norm1, norm2 = _norm(merged[col1]), _norm(merged[col2])
         disc_mask = ~(
             (norm1 == norm2) |
-            (norm1.isna() & norm2.isna())
+            (norm1.isna() & norm2.isna()) |
+            _numeric_equal(norm1, norm2)
         )
         match_col = f'{col}_match'
-        merged[match_col] = 'Y'
-        merged.loc[disc_mask, match_col] = 'N'
+        merged[match_col] = pd.NA
+        merged.loc[matched_mask & ~disc_mask, match_col] = 'Y'
+        merged.loc[matched_mask & disc_mask, match_col] = 'N'
 
-        discrepancies = merged[disc_mask]
-        matches = merged[~disc_mask]
+        # Summary stats and discrepancy/match files only consider rows that
+        # actually matched in df2 — unmatched rows aren't a "discrepancy",
+        # there's simply nothing on the other side to compare against.
+        scoped = merged[matched_mask]
+        scoped_disc_mask = disc_mask[matched_mask]
 
-        total = len(merged)
+        discrepancies = scoped[scoped_disc_mask]
+        matches = scoped[~scoped_disc_mask]
+
+        total = len(scoped)
         n_disc = len(discrepancies)
         n_match = len(matches)
         match_rate = round(n_match / total, 4) if total > 0 else None
         disc_rate = round(n_disc / total, 4) if total > 0 else None
 
-        notna_match_mask = (~disc_mask) & norm1.notna() & norm2.notna()
+        scoped_norm1, scoped_norm2 = _norm(scoped[col1]), _norm(scoped[col2])
+        notna_match_mask = (~scoped_disc_mask) & scoped_norm1.notna() & scoped_norm2.notna()
         n_notna_match = int(notna_match_mask.sum())
         notna_match_rate = round(n_notna_match / total * 100, 2) if total > 0 else None
 
@@ -122,7 +163,9 @@ def compare_datasets(df1, df2, join_cols, output_dir, df1_name='fis', df2_name='
         else:
             print(f"[OK]   '{col}': no discrepancies")
 
-    ordered_cols = join_cols + sorted(c for c in merged.columns if c not in join_cols)
+    ordered_cols = list(join_cols) + [match_flag_col]
+    for col in common_cols:
+        ordered_cols += [f'{col}_{df1_name}', f'{col}_{df2_name}', f'{col}_match']
     merged = merged[ordered_cols]
     merged_path = os.path.join(output_dir, '_merged.csv')
     merged.to_csv(merged_path, index=False)
